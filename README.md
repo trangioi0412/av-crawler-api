@@ -12,7 +12,10 @@ python -m venv .venv
 # source .venv/bin/activate     # macOS/Linux
 
 pip install -r requirements.txt
-cp .env.example .env            # defaults work out of the box (SQLite)
+cp .env.example .env
+# Then set GOOGLE_SPREADSHEET_ID and drop a service-account key at
+# credentials/google-service-account.json -- see "Google Sheets" below.
+# There is no database; nothing works until this is set.
 
 uvicorn main:app --reload --port 8000
 ```
@@ -20,17 +23,38 @@ uvicorn main:app --reload --port 8000
 - `GET http://localhost:8000/health` → `{"status": "ok"}`
 - `GET http://localhost:8000/docs` → interactive OpenAPI docs (FastAPI default)
 
-The SQLite database file is created automatically at `./data/sync.db` on first run.
+## Google Sheets -- the only persistence layer
 
-## Google Sheets export (optional)
+There is no database. One shared spreadsheet (`GOOGLE_SPREADSHEET_ID`) holds
+everything:
 
-Every successfully-persisted product is also exported to a per-manufacturer
-tab (e.g. `hdcvt`) in a shared Google Sheet, if `GOOGLE_SPREADSHEET_ID` is
-set in `.env`. This is a best-effort supplementary sink: SQLite remains the
-source of truth for sync job status and deduplication, and a Sheets failure
-is logged but never fails the sync job. See `services/google_sheets.py` for
-the column mapping and upsert strategy (matches existing rows by
-`product (item)`, falling back to `Title`).
+- **One tab per manufacturer** (e.g. `hdcvt`, `yealink`) -- the product
+  catalog itself. Created automatically on that brand's first successful
+  sync. See `services/google_sheets.py` for the column mapping and the
+  upsert strategy (matches existing rows by `product (item)`, falling back
+  to `Title`).
+- **`New_brand`** -- the "Yeu cau them hang moi" (request a new
+  manufacturer) intake queue. One row per submitted request, walking
+  `Chờ duyệt -> Duyệt -> Đang cào dữ liệu -> Đã cào xong` (row deleted once
+  done) or `-> Lỗi cào dữ liệu` if the sync failed. See
+  `services/admin_sheets.py::NewBrandStore`.
+- **`System_Config`** -- durable `brand key -> website` lookup. Written at
+  approval time (New_brand rows are transient; this is what a future
+  re-sync of that brand looks up once its New_brand row is long gone). See
+  `SystemConfigStore`.
+- **`Sync_logs`** -- history of sync job runs (job id, manufacturer,
+  status, counts). Written only at job start and job end, never per item,
+  to stay well under Google Sheets API rate limits -- see
+  `services/job_store.py` for the in-memory state that serves *live*
+  progress polling (`GET /api/sync/status/{job_id}`) while a job is
+  running in this process.
+
+`GET /api/manufacturers` / `POST /api/sync/manufacturer` treat every other
+tab in the spreadsheet as a syncable manufacturer (see
+`services/admin_sheets.py::RESERVED_SHEET_TITLES` for the exact exclusion
+list, and `core/manufacturer_resolution.py` for how a tab name resolves to
+either a hand-written code adapter or a `System_Config`-driven AI adapter).
+`POST /api/sync/all` syncs every one of them, one after another.
 
 Setup: download a service-account JSON key from Google Cloud Console, save
 it to `credentials/google-service-account.json` (gitignored -- never
@@ -43,45 +67,65 @@ commit it), share the target spreadsheet with that service account's
 pytest
 ```
 
-34 tests, no network access and no real database required — see `tests/conftest.py` (points `DATABASE_URL` at a throwaway SQLite file before anything else imports) and `tests/fixtures/hdcvt_*.html` (real HTML snapshots of hdcvt.com captured 2026-09-18, used so adapter tests never hit the live site).
+No network access, no real database, and no real Google Sheets required --
+every test gets a `fake_spreadsheet` fixture (`tests/fake_sheets.py`, an
+in-memory stand-in for the gspread client) in place of the real one, and
+`tests/fixtures/hdcvt_*.html` (real HTML snapshots of hdcvt.com captured
+2026-09-18) so adapter tests never hit the live site.
 
-There is no separate "integration test against the real site" suite; that was instead run manually against the live HDCVT site during development (see `Known limitations` in the root README) and isn't part of `pytest` since it's slow, external, and not idempotent to run in CI.
+There is no separate "integration test against the real site" suite; that
+was instead run manually against the live HDCVT site during development
+(see `Known limitations` in the root DataCrawler README this project was
+copied out of) and isn't part of `pytest` since it's slow, external, and
+not idempotent to run in CI.
 
 ## Architecture (this package)
 
 ```
 core/
-  engine.py          sync_manufacturer_data() — the ONE generic entry point,
-                      contains zero manufacturer-specific logic
-  registry.py         key -> adapter class + config, adapters self-register
-  models/              RawProduct / CanonicalProduct / ValidationResult / job status
+  engine.py                    sync_manufacturer_data() — the ONE generic entry point,
+                                contains zero manufacturer-specific logic
+  manufacturer_resolution.py    key -> (adapter class, config), either a code adapter
+                                (registry.py) or a System_Config-driven AI adapter
+  registry.py                   key -> adapter class + config, code adapters self-register
+  models/                        RawProduct / CanonicalProduct / ValidationResult / job status
   pipeline/
-    normalizer.py       RawProduct -> CanonicalProduct (trim, absolutize URLs, dedup_key)
-    validator.py         CanonicalProduct -> VALID / WARNING / INVALID
-    deduplicator.py      dedup_key -> create / update / skip-duplicate-in-run
-    transformer.py       CanonicalProduct -> dict of DB columns
+    normalizer.py                 RawProduct -> CanonicalProduct (trim, absolutize URLs, dedup_key)
+    validator.py                  CanonicalProduct -> VALID / WARNING / INVALID
+    deduplicator.py               dedup_key -> create / skip-duplicate-in-run (cross-run
+                                   create-vs-update is Google Sheets' job now, see below)
+    transformer.py                 CanonicalProduct -> dict of sheet-row fields
 
 manufacturers/
   base.py             BaseManufacturerAdapter (crawl/fetch/parse contract)
-  hdcvt/               manufacturer adapter #1 (see below)
-
-db/
-  models.py           SQLAlchemy models: Product, SyncJob
-  repository.py        all DB access goes through here
+  hdcvt/               manufacturer adapter #1, hand-written (see below)
+  generic_ai/          AI-assisted adapter used for every System_Config-driven brand
 
 api/
-  routes/              health, sync (POST /api/sync/manufacturer, GET /api/sync/status/{id}),
-                        catalog (GET /api/manufacturers, GET /api/products)
+  routes/              health, sync (POST /api/sync/manufacturer, POST /api/sync/all,
+                        GET /api/sync/status/{id}), catalog (GET /api/manufacturers,
+                        GET /api/products), manufacturer-requests (New_brand intake)
 
 services/
-  http_client.py       shared polite HTTP client: rate limiting, retry/backoff,
-                        timeout, robots.txt awareness -- one implementation
-                        used by every adapter
+  google_sheets.py     per-manufacturer product tab: GoogleSheetsExporter (upsert by natural key)
+  admin_sheets.py       New_brand / System_Config / Sync_logs sheets (SheetRowStore + friends)
+  job_store.py           in-memory live job status + durable Sync_logs writes at start/end
+  sheets_client.py        the one function that opens the spreadsheet (gspread auth)
+  http_client.py         shared polite HTTP client: rate limiting, retry/backoff,
+                          timeout, robots.txt awareness -- one implementation
+                          used by every adapter
 ```
 
 ## Adding a new manufacturer
 
-No changes to `core/`, `db/`, or `api/` are required. Steps:
+Two ways to onboard a brand:
+
+- **Through the admin UI** ("Yeu cau them hang moi" -> preview -> approve):
+  no code at all, uses the generic AI-assisted adapter. See the New_brand
+  lifecycle above.
+- **Hand-written code adapter** (for a brand that needs real, verified
+  selectors instead of AI extraction, like HDCVT): no changes to `core/`
+  or `api/` are required. Steps:
 
 1. **Inspect the real site first.** Fetch a category/listing page and a product detail page, find the actual selectors or a sitemap/API. Do not guess.
 2. Create `manufacturers/<name>/config.py`:

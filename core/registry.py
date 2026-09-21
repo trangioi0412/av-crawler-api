@@ -52,6 +52,12 @@ class ManufacturerRegistry:
             raise UnknownManufacturerError(normalized, sorted(self._configs.keys()))
         return self._configs[normalized]
 
+    def get_adapter_class(self, key: str) -> type[BaseManufacturerAdapter]:
+        normalized = key.strip().lower()
+        if normalized not in self._adapters:
+            raise UnknownManufacturerError(normalized, sorted(self._adapters.keys()))
+        return self._adapters[normalized]
+
     def get(self, key: str) -> BaseManufacturerAdapter:
         """Instantiate the adapter registered for `key`, wired up with a
         fresh HTTP client configured from that manufacturer's own settings.

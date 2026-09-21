@@ -1,12 +1,12 @@
-"""Tests for the "request a new manufacturer" intake endpoints. These just
-queue a name/website in the database -- no adapter registration or
-crawling happens here.
+"""Tests for the "Yeu cau them hang moi" (request a new manufacturer)
+intake endpoints -- tracked entirely in the New_brand Google Sheet, no
+database (see api/routes/manufacturer_requests.py).
 
-`probe_manufacturer_website` (the auto-recon step) is monkeypatched to a
-fast stub in every test: it makes real HTTP requests to whatever website a
-user submits, and a test run must never depend on real, external websites
-being reachable (this bit us once already with Google Sheets -- see
-tests/conftest.py -- not repeating it here).
+`probe_manufacturer_website` (the auto-recon step) and `GenericAIAdapter`
+(both where `/preview` uses it directly, and where `resolve_manufacturer`
+picks it up for the real sync `/approve` kicks off) are monkeypatched in
+every test: a real one would make real HTTP requests to whatever website a
+user submits, and hit a real Ollama server.
 """
 from __future__ import annotations
 
@@ -16,9 +16,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 import api.routes.manufacturer_requests as manufacturer_requests_module
+import core.manufacturer_resolution as manufacturer_resolution_module
 from core.models.product import RawProduct
-from core.registry import registry
 from main import app
+from services.admin_sheets import NewBrandStatus
 
 
 @pytest.fixture(autouse=True)
@@ -69,7 +70,11 @@ class FakeAiAdapter:
 
 @pytest.fixture(autouse=True)
 def _stub_ai_adapter(monkeypatch):
+    # /preview calls GenericAIAdapter directly from this module...
     monkeypatch.setattr(manufacturer_requests_module, "GenericAIAdapter", FakeAiAdapter)
+    # ...but /approve's actual sync goes through resolve_manufacturer(),
+    # which imports GenericAIAdapter into its own module namespace.
+    monkeypatch.setattr(manufacturer_resolution_module, "GenericAIAdapter", FakeAiAdapter)
 
 
 @pytest.fixture()
@@ -84,9 +89,10 @@ def test_create_request_normalizes_bare_domain_to_https(client: TestClient):
     )
     assert response.status_code == 201
     body = response.json()
+    assert body["id"] == "yealink"
     assert body["name"] == "Yealink"
     assert body["website_url"] == "https://yealink.com"
-    assert body["status"] == "pending"
+    assert body["status"] == NewBrandStatus.PENDING
     assert "Kiểm tra sơ bộ" in body["notes"]
 
 
@@ -122,12 +128,12 @@ def test_update_status_transitions_request(client: TestClient):
 
     response = client.patch(
         f"/api/manufacturer-requests/{created['id']}",
-        json={"status": "in_progress", "notes": "Adapter under review"},
+        json={"status": NewBrandStatus.CRAWLING, "notes": "Adapter under review"},
     )
 
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "in_progress"
+    assert body["status"] == NewBrandStatus.CRAWLING
     assert body["notes"] == "Adapter under review"
 
 
@@ -140,7 +146,9 @@ def test_update_status_rejects_invalid_status(client: TestClient):
 
 
 def test_update_status_unknown_id_returns_404(client: TestClient):
-    response = client.patch("/api/manufacturer-requests/999999", json={"status": "done"})
+    response = client.patch(
+        "/api/manufacturer-requests/does-not-exist", json={"status": NewBrandStatus.DONE}
+    )
     assert response.status_code == 404
 
 
@@ -160,22 +168,29 @@ def test_preview_returns_extracted_sample_products(client: TestClient):
     assert body["products"][0]["model"] == "FAKE-1"
 
 
-def test_preview_does_not_register_the_manufacturer(client: TestClient):
+def test_preview_does_not_register_the_manufacturer(client: TestClient, fake_spreadsheet):
     created = client.post(
         "/api/manufacturer-requests", json={"name": "AI Not Registered Co", "website_url": "example.com"}
     ).json()
 
     client.post(f"/api/manufacturer-requests/{created['id']}/preview")
 
-    assert registry.is_registered("ai-not-registered-co") is False
+    # Preview must not write System_Config or create a product sheet tab.
+    assert "ai-not-registered-co" not in [ws.title for ws in fake_spreadsheet.worksheets()]
 
 
 def test_preview_unknown_request_returns_404(client: TestClient):
-    response = client.post("/api/manufacturer-requests/999999/preview")
+    response = client.post("/api/manufacturer-requests/does-not-exist/preview")
     assert response.status_code == 404
 
 
-def test_approve_registers_manufacturer_and_completes_sync(client: TestClient):
+def _rows_of(fake_spreadsheet, tab: str) -> list[dict[str, str]]:
+    values = fake_spreadsheet.worksheet(tab).get_all_values()
+    header, body = values[0], values[1:]
+    return [dict(zip(header, row)) for row in body]
+
+
+def test_approve_records_website_and_completes_sync(client: TestClient, fake_spreadsheet):
     created = client.post(
         "/api/manufacturer-requests", json={"name": "AI Approve Co", "website_url": "example.com"}
     ).json()
@@ -187,19 +202,20 @@ def test_approve_registers_manufacturer_and_completes_sync(client: TestClient):
     assert body["manufacturer_key"] == "ai-approve-co"
     job_id = body["job_id"]
 
-    assert registry.is_registered("ai-approve-co") is True
-
     status = client.get(f"/api/sync/status/{job_id}").json()
     assert status["status"] in ("completed", "completed_with_warnings")
     assert status["total"] == 2
     assert status["success"] == 2
 
-    updated_request = client.get("/api/manufacturer-requests").json()
-    match = next(r for r in updated_request if r["id"] == created["id"])
-    assert match["status"] == "done"
-    assert match["ai_sync_enabled"] is True
+    # System_Config durably knows this brand's website from here on...
+    slugs = {row["Slug"] for row in _rows_of(fake_spreadsheet, "System_Config")}
+    assert "ai-approve-co" in slugs
+
+    # ...so the New_brand row is gone once onboarding finished.
+    remaining = client.get("/api/manufacturer-requests").json()
+    assert all(r["id"] != "ai-approve-co" for r in remaining)
 
 
 def test_approve_unknown_request_returns_404(client: TestClient):
-    response = client.post("/api/manufacturer-requests/999999/approve")
+    response = client.post("/api/manufacturer-requests/does-not-exist/approve")
     assert response.status_code == 404

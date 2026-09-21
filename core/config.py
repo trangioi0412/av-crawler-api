@@ -13,12 +13,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # Database
-    database_url: str = "sqlite:///./data/sync.db"
-
-    # Google Sheets export (optional supplementary sink -- see
-    # services/google_sheets.py). Leave GOOGLE_SPREADSHEET_ID unset to
-    # disable; SQLite remains the source of truth either way.
+    # Google Sheets -- the only persistence layer this service has (no
+    # database). Used for the product catalog (services/google_sheets.py)
+    # and for the New_brand / System_Config / Sync_logs admin sheets
+    # (services/admin_sheets.py). Sync requests fail with a clear error if
+    # this isn't configured; see main.py's startup warning too.
     google_sheets_credentials_file: str | None = "credentials/google-service-account.json"
     google_spreadsheet_id: str | None = None
 

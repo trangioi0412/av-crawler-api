@@ -13,7 +13,7 @@ class ManufacturerOut(BaseModel):
 
 
 class SyncRequest(BaseModel):
-    manufacturer: str = Field(..., description="Registry key, e.g. 'hdcvt'")
+    manufacturer: str = Field(..., description="Manufacturer key, e.g. 'hdcvt' or a slugified brand name")
     mode: str = Field("full", description="'full' (default). 'incremental' is reserved for future use.")
 
 
@@ -22,6 +22,15 @@ class SyncAcceptedResponse(BaseModel):
     job_id: str
     status: str
     manufacturer: str
+
+
+class SyncAllAcceptedResponse(BaseModel):
+    success: bool = True
+    jobs: list[SyncAcceptedResponse]
+    skipped: list[str] = Field(
+        default_factory=list,
+        description="Brand sheet names with no known crawl source (no code adapter, no System_Config website)",
+    )
 
 
 class SyncStatusResponse(BaseModel):
@@ -42,51 +51,30 @@ class SyncStatusResponse(BaseModel):
     created_at: datetime
 
 
-class ProductOut(BaseModel):
-    id: int
-    manufacturer: str
-    brand: str | None
-    name: str | None
-    model: str | None
-    sku: str | None
-    category: str | None
-    subcategory: str | None
-    description: str | None
-    short_description: str | None
-    product_url: str | None
-    image_urls: list[str]
-    document_urls: list[str]
-    specifications: dict
-    features: list[str]
-    status: str
-    source: str
-    source_url: str | None
-    last_synced_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
 class ManufacturerRequestIn(BaseModel):
     name: str = Field(..., min_length=1, description="Manufacturer name, e.g. 'Yealink'")
     website_url: str = Field(..., min_length=1, description="Manufacturer's official website, e.g. 'yealink.com'")
 
 
 class ManufacturerRequestStatusIn(BaseModel):
-    status: str = Field(..., description="One of: pending, in_progress, done, rejected")
+    status: str = Field(..., description="One of the New_brand status values, see admin_sheets.NewBrandStatus")
     notes: str | None = None
 
 
 class ManufacturerRequestOut(BaseModel):
-    id: int
+    """Mirrors one row of the New_brand sheet. `id` is a slug of the brand
+    name (Sheets rows have no database auto-increment id), stable across
+    the whole request lifecycle -- it's also the manufacturer key the
+    brand is synced under once approved.
+    """
+
+    id: str
     name: str
     website_url: str | None
     status: str
     notes: str | None
-    ai_sync_enabled: bool
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = {"from_attributes": True}
+    created_at: str
+    updated_at: str
 
 
 class AiPreviewProduct(BaseModel):

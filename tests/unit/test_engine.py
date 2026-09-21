@@ -1,7 +1,8 @@
 """Tests the generic engine (`sync_manufacturer_data`) end to end against a
-fake manufacturer adapter -- proving the pipeline (crawl -> normalize ->
-validate -> dedupe -> transform -> persist) works without any real
-manufacturer or network access, and that it stays manufacturer-agnostic.
+fake manufacturer adapter and a fake Google Sheets spreadsheet -- proving
+the pipeline (crawl -> normalize -> validate -> dedupe -> transform ->
+persist) works without any real manufacturer, network access, or Google
+credentials, and that it stays manufacturer-agnostic.
 """
 from __future__ import annotations
 
@@ -13,9 +14,8 @@ from core.engine import sync_manufacturer_data
 from core.models.job import JobStatus
 from core.models.product import RawProduct
 from core.registry import ManufacturerRegistry, UnknownManufacturerError
-from db.database import session_scope
-from db.repository import ProductRepository, SyncJobRepository
 from manufacturers.base import BaseManufacturerAdapter, ManufacturerConfig
+from services import job_store
 
 
 class FakeAdapter(BaseManufacturerAdapter):
@@ -56,10 +56,18 @@ def fake_registry(monkeypatch):
     )
     reg.register("faketest", FakeAdapter, config)
     monkeypatch.setattr("core.engine.registry", reg)
+    monkeypatch.setattr("core.manufacturer_resolution.registry", reg)
     return reg
 
 
-def test_sync_creates_products_and_isolates_failures(fake_registry):
+def _sheet_rows(fake_spreadsheet, tab: str = "faketest") -> list[dict[str, str]]:
+    ws = fake_spreadsheet.worksheet(tab)
+    values = ws.get_all_values()
+    header, body = values[0], values[1:]
+    return [dict(zip(header, row)) for row in body]
+
+
+def test_sync_creates_products_and_isolates_failures(fake_registry, fake_spreadsheet):
     result = sync_manufacturer_data(manufacturer="faketest")
 
     assert result.total == 3
@@ -67,65 +75,55 @@ def test_sync_creates_products_and_isolates_failures(fake_registry):
     assert result.failed == 1
     assert result.status == JobStatus.COMPLETED_WITH_WARNINGS
 
-    with session_scope() as session:
-        products = ProductRepository(session).list_products(manufacturer="faketest")
-        assert {p.model for p in products} >= {"MODEL-1", "MODEL-2"}
+    models = {r["product (item)"] for r in _sheet_rows(fake_spreadsheet)}
+    assert models >= {"MODEL-1", "MODEL-2"}
 
 
-def test_sync_upserts_instead_of_duplicating_on_second_run(fake_registry):
+def test_sync_upserts_instead_of_duplicating_on_second_run(fake_registry, fake_spreadsheet):
     sync_manufacturer_data(manufacturer="faketest")
     sync_manufacturer_data(manufacturer="faketest")
 
-    with session_scope() as session:
-        products = ProductRepository(session).list_products(manufacturer="faketest", limit=1000)
-        models = [p.model for p in products if p.model in ("MODEL-1", "MODEL-2")]
-        # Same two dedup keys every run -> never duplicated, regardless of
-        # how many times the sync has run across the test session.
-        assert models.count("MODEL-1") == 1
-        assert models.count("MODEL-2") == 1
+    models = [r["product (item)"] for r in _sheet_rows(fake_spreadsheet) if r["product (item)"] in ("MODEL-1", "MODEL-2")]
+    # Same two natural keys every run -> the sheet row is updated in place,
+    # never duplicated, regardless of how many times the sync has run.
+    assert models.count("MODEL-1") == 1
+    assert models.count("MODEL-2") == 1
 
 
-def test_sync_tracks_job_status_end_to_end(fake_registry):
-    with session_scope() as session:
-        SyncJobRepository(session).create(job_id="job-engine-test", manufacturer="faketest", mode="full")
+def test_sync_tracks_job_status_end_to_end(fake_registry, fake_spreadsheet):
+    job_store.create(job_id="job-engine-test", manufacturer="faketest", mode="full")
 
     sync_manufacturer_data(manufacturer="faketest", job_id="job-engine-test")
 
-    with session_scope() as session:
-        job = SyncJobRepository(session).get("job-engine-test")
-        assert job.status == JobStatus.COMPLETED_WITH_WARNINGS.value
-        assert job.total == 3
-        assert job.success == 2
-        assert job.failed == 1
-        assert job.progress == 100.0
-        assert job.started_at is not None
-        assert job.completed_at is not None
+    job = job_store.get("job-engine-test")
+    assert job.status == JobStatus.COMPLETED_WITH_WARNINGS.value
+    assert job.total == 3
+    assert job.success == 2
+    assert job.failed == 1
+    assert job.progress == 100.0
+    assert job.started_at is not None
+    assert job.completed_at is not None
 
 
-def test_sync_unknown_manufacturer_raises(fake_registry):
+def test_sync_unknown_manufacturer_raises(fake_registry, fake_spreadsheet):
     with pytest.raises(UnknownManufacturerError):
         sync_manufacturer_data(manufacturer="does-not-exist")
 
 
-def test_incremental_mode_not_yet_implemented(fake_registry):
+def test_incremental_mode_not_yet_implemented(fake_registry, fake_spreadsheet):
     with pytest.raises(NotImplementedError):
         sync_manufacturer_data(manufacturer="faketest", mode="incremental")
 
 
-def test_sync_never_touches_google_sheets_when_unconfigured(fake_registry, monkeypatch):
-    """Regression test: a real test run once silently created junk tabs in
-    the production Google Sheet because GOOGLE_SPREADSHEET_ID leaked in
-    from backend/.env. tests/conftest.py now force-clears it to "", and this
-    asserts the engine honors that by never even constructing the exporter.
+def test_sync_fails_cleanly_when_google_sheets_unconfigured(fake_registry, fake_spreadsheet, monkeypatch):
+    """Regression guard: Google Sheets is the only persistence layer now,
+    so a missing GOOGLE_SPREADSHEET_ID must surface as a failed job with a
+    clear error -- not a silent no-op (that was the old, SQLite-backed
+    behavior, back when Sheets export was best-effort/supplementary).
     """
-    import core.engine as engine_module
-
-    def _fail_if_called(*args, **kwargs):
-        raise AssertionError("GoogleSheetsExporter must not be constructed when unconfigured")
-
-    monkeypatch.setattr(engine_module, "GoogleSheetsExporter", _fail_if_called)
-    assert not engine_module.settings.google_spreadsheet_id
+    monkeypatch.setattr("core.engine.settings.google_spreadsheet_id", "")
 
     result = sync_manufacturer_data(manufacturer="faketest")
 
-    assert result.status == JobStatus.COMPLETED_WITH_WARNINGS
+    assert result.status == JobStatus.FAILED
+    assert "Google Sheets" in (result.error or "")

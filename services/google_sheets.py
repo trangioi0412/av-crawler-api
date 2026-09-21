@@ -1,11 +1,11 @@
-"""Google Sheets export -- an optional, best-effort supplementary sink for
-synced products, on top of (not instead of) the SQLite database.
+"""Google Sheets export -- the persistence layer for synced products.
 
-SQLite remains the source of truth for sync job status and deduplication;
-a Sheets failure is logged and never fails the sync job (see
-`core/engine.py`). Writes go to a per-manufacturer worksheet tab inside one
-shared spreadsheet (`GOOGLE_SPREADSHEET_ID`), created automatically on
-first use if it doesn't already exist.
+Google Sheets is the source of truth for the product catalog (there is no
+database backing this service -- see `admin_sheets.py` for the New_brand /
+System_Config / Sync_logs admin sheets that replace what used to be SQLite
+tables). Writes go to a per-manufacturer worksheet tab inside one shared
+spreadsheet (`GOOGLE_SPREADSHEET_ID`), created automatically on first use if
+it doesn't already exist.
 
 Column layout and upsert identity were specified by the spreadsheet's
 owner (2026-09-18) to match the existing "product_brand_avs-tek" tab and
@@ -32,10 +32,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import gspread
-from google.oauth2.service_account import Credentials
 
 from core.logging import get_logger
 from core.models.product import CanonicalProduct
+from services.sheets_client import open_spreadsheet
 
 logger = get_logger(__name__)
 
@@ -52,9 +52,6 @@ SHEET_HEADERS = [
     "Brand",
     "Datasheet",
 ]
-
-_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-
 
 def build_sheet_row(product: CanonicalProduct, *, brand_display_name: str) -> dict[str, str]:
     return {
@@ -81,13 +78,7 @@ def _natural_key(row: dict[str, str]) -> str:
 
 class GoogleSheetsExporter:
     def __init__(self, credentials_path: Path, spreadsheet_id: str) -> None:
-        if not credentials_path.exists():
-            raise FileNotFoundError(
-                f"Google service-account credentials file not found: {credentials_path}"
-            )
-        creds = Credentials.from_service_account_file(str(credentials_path), scopes=_SCOPES)
-        self._client = gspread.authorize(creds)
-        self._spreadsheet = self._client.open_by_key(spreadsheet_id)
+        self._spreadsheet = open_spreadsheet(credentials_path, spreadsheet_id)
 
     def _get_or_create_worksheet(self, tab_name: str) -> gspread.Worksheet:
         try:
@@ -99,6 +90,20 @@ class GoogleSheetsExporter:
             )
             worksheet.update([SHEET_HEADERS], "A1")
             return worksheet
+
+    def get_rows(self, tab_name: str) -> list[dict[str, str]]:
+        """Reads every product row currently in `tab_name`, or `[]` if that
+        tab doesn't exist yet (manufacturer never synced).
+        """
+        try:
+            worksheet = self._spreadsheet.worksheet(tab_name)
+        except gspread.WorksheetNotFound:
+            return []
+        values = worksheet.get_all_values()
+        if not values:
+            return []
+        header, body = values[0], values[1:]
+        return [dict(zip(header, row + [""] * (len(header) - len(row)))) for row in body]
 
     def upsert_rows(self, tab_name: str, rows: list[dict[str, str]]) -> dict[str, int]:
         """Create-or-update rows in `tab_name`, matching existing rows by
