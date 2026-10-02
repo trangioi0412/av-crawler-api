@@ -33,6 +33,12 @@ class ManufacturerConfig:
     user_agent: str | None = None
     respect_robots_txt: bool = True
     max_products: int | None = None  # optional cap on discovered URLs (e.g. to bound AI-extraction cost)
+    # Extra CA bundle path for a site whose server sends an incomplete TLS
+    # chain (no intermediate cert) -- see manufacturers/eizo/ca_bundle.py
+    # for why this exists and how one gets built. None means "use the
+    # default certifi trust store", which is correct for every manufacturer
+    # whose server is configured normally.
+    ca_bundle_path: str | None = None
 
 
 class BaseManufacturerAdapter(ABC):

@@ -5,13 +5,13 @@ Two tiers, for two different needs:
     `GET /api/sync/status/{job_id}` serves while a job is running in this
     process -- cheap, no network I/O, safe to call as often as the pipeline
     likes.
-  - The `Sync_logs` Google Sheet (see `services/admin_sheets.py`), written
+  - The `DataCrawler_Sync_logs` Google Sheet (see `services/admin_sheets.py`), written
     only at job start and job end. Writing a row per crawled item would
     hammer the Sheets API (hundreds of writes per sync) and blow through
     its rate limits; a durable history only needs the two endpoints of each
     job, not every intermediate step.
 
-`get()`/`list_recent()` fall back to the Sync_logs sheet when a job isn't
+`get()`/`list_recent()` fall back to the DataCrawler_Sync_logs sheet when a job isn't
 (or is no longer) in memory -- e.g. after a process restart.
 """
 from __future__ import annotations
@@ -56,7 +56,7 @@ def _sync_logs_store() -> SyncLogsStore | None:
         spreadsheet = open_admin_spreadsheet(settings.google_sheets_credentials_path, settings.google_spreadsheet_id)
         return SyncLogsStore(spreadsheet)
     except Exception:  # noqa: BLE001 - job history is best-effort; must never break the sync it's tracking
-        logger.exception("Could not open Sync_logs sheet -- this job's history will be in-memory only")
+        logger.exception("Could not open DataCrawler_Sync_logs sheet -- this job's history will be in-memory only")
         return None
 
 
@@ -70,7 +70,7 @@ def create(job_id: str, manufacturer: str, mode: str) -> JobRecord:
         try:
             store.create(job_id, manufacturer, mode)
         except Exception:  # noqa: BLE001
-            logger.exception("Failed to write Sync_logs row for job start (job_id=%s)", job_id)
+            logger.exception("Failed to write DataCrawler_Sync_logs row for job start (job_id=%s)", job_id)
     return record
 
 
@@ -138,7 +138,7 @@ def finish(
                 },
             )
         except Exception:  # noqa: BLE001
-            logger.exception("Failed to write Sync_logs row for job completion (job_id=%s)", job_id)
+            logger.exception("Failed to write DataCrawler_Sync_logs row for job completion (job_id=%s)", job_id)
 
 
 def fail(
@@ -181,7 +181,7 @@ def fail(
                 },
             )
         except Exception:  # noqa: BLE001
-            logger.exception("Failed to write Sync_logs row for job failure (job_id=%s)", job_id)
+            logger.exception("Failed to write DataCrawler_Sync_logs row for job failure (job_id=%s)", job_id)
 
 
 def get(job_id: str) -> JobRecord | None:

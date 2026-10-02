@@ -20,7 +20,7 @@ def list_manufacturers() -> list[ManufacturerOut]:
     (e.g. hdcvt -- always listed, even before their sheet tab exists, since
     a brand's first sync is what creates that tab) plus every other brand
     sheet tab in the spreadsheet (see `admin_sheets.list_brand_sheet_names`),
-    enriched with a base_url from System_Config. Falls back to just the
+    enriched with a base_url from DataCrawler_System_Config. Falls back to just the
     code-registered adapters if Sheets isn't configured.
     """
     out: list[ManufacturerOut] = [
@@ -46,7 +46,7 @@ def list_manufacturers() -> list[ManufacturerOut]:
             # A sheet tab exists but nothing knows its crawl source (e.g. a
             # tab created by hand before this brand went through the
             # onboarding flow). Still listed so it's visible in the UI,
-            # just not syncable until someone adds a System_Config row.
+            # just not syncable until someone adds a DataCrawler_System_Config row.
             out.append(ManufacturerOut(key=key, display_name=name, base_url=""))
 
     return out

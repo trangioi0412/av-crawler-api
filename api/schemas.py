@@ -29,7 +29,7 @@ class SyncAllAcceptedResponse(BaseModel):
     jobs: list[SyncAcceptedResponse]
     skipped: list[str] = Field(
         default_factory=list,
-        description="Brand sheet names with no known crawl source (no code adapter, no System_Config website)",
+        description="Brand sheet names with no known crawl source (no code adapter, no DataCrawler_System_Config website)",
     )
 
 
@@ -57,12 +57,12 @@ class ManufacturerRequestIn(BaseModel):
 
 
 class ManufacturerRequestStatusIn(BaseModel):
-    status: str = Field(..., description="One of the New_brand status values, see admin_sheets.NewBrandStatus")
+    status: str = Field(..., description="One of the DataCrawler_New_brand status values, see admin_sheets.NewBrandStatus")
     notes: str | None = None
 
 
 class ManufacturerRequestOut(BaseModel):
-    """Mirrors one row of the New_brand sheet. `id` is a slug of the brand
+    """Mirrors one row of the DataCrawler_New_brand sheet. `id` is a slug of the brand
     name (Sheets rows have no database auto-increment id), stable across
     the whole request lifecycle -- it's also the manufacturer key the
     brand is synced under once approved.
@@ -101,3 +101,13 @@ class AiApproveResponse(BaseModel):
     manufacturer_key: str
     job_id: str
     status: str
+
+
+class ImageDownloadResponse(BaseModel):
+    success: bool = True
+    manufacturer: str
+    products_with_images: int
+    downloaded: int
+    skipped_existing: int
+    skipped_no_title: int
+    failed: list[str] = Field(default_factory=list, description="'<url>: <error>' for every image that failed to download")

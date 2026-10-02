@@ -15,7 +15,7 @@ class Settings(BaseSettings):
 
     # Google Sheets -- the only persistence layer this service has (no
     # database). Used for the product catalog (services/google_sheets.py)
-    # and for the New_brand / System_Config / Sync_logs admin sheets
+    # and for the DataCrawler_New_brand / DataCrawler_System_Config / DataCrawler_Sync_logs admin sheets
     # (services/admin_sheets.py). Sync requests fail with a clear error if
     # this isn't configured; see main.py's startup warning too.
     google_sheets_credentials_file: str | None = "credentials/google-service-account.json"

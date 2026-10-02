@@ -1,8 +1,8 @@
 """Google Sheets export -- the persistence layer for synced products.
 
 Google Sheets is the source of truth for the product catalog (there is no
-database backing this service -- see `admin_sheets.py` for the New_brand /
-System_Config / Sync_logs admin sheets that replace what used to be SQLite
+database backing this service -- see `admin_sheets.py` for the DataCrawler_New_brand /
+DataCrawler_System_Config / DataCrawler_Sync_logs admin sheets that replace what used to be SQLite
 tables). Writes go to a per-manufacturer worksheet tab inside one shared
 spreadsheet (`GOOGLE_SPREADSHEET_ID`), created automatically on first use if
 it doesn't already exist.

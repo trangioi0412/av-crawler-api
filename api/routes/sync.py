@@ -4,7 +4,7 @@ Deliberately NOT `/api/sync/hdcvt`, `/api/sync/yealink`, etc. -- one route
 takes `manufacturer` as a request field and resolves it the same way the
 engine does (see `core/manufacturer_resolution.py`), so a new manufacturer
 needs no new route -- whether it's a hand-written code adapter or a brand
-onboarded through System_Config.
+onboarded through DataCrawler_System_Config.
 """
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ def start_sync_all(background_tasks: BackgroundTasks) -> SyncAllAcceptedResponse
     """Syncs every manufacturer that has its own sheet tab (i.e. every tab
     except the reserved admin ones -- see `admin_sheets.RESERVED_SHEET_TITLES`),
     to check each for new products. Brands with a tab but no known crawl
-    source (no code adapter and no System_Config website) are skipped and
+    source (no code adapter and no DataCrawler_System_Config website) are skipped and
     reported back, rather than failing the whole batch.
     """
     if not settings.google_spreadsheet_id or not settings.google_sheets_credentials_path:

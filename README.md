@@ -33,16 +33,16 @@ everything:
   sync. See `services/google_sheets.py` for the column mapping and the
   upsert strategy (matches existing rows by `product (item)`, falling back
   to `Title`).
-- **`New_brand`** -- the "Yeu cau them hang moi" (request a new
+- **`DataCrawler_New_brand`** -- the "Yeu cau them hang moi" (request a new
   manufacturer) intake queue. One row per submitted request, walking
   `Chờ duyệt -> Duyệt -> Đang cào dữ liệu -> Đã cào xong` (row deleted once
   done) or `-> Lỗi cào dữ liệu` if the sync failed. See
   `services/admin_sheets.py::NewBrandStore`.
-- **`System_Config`** -- durable `brand key -> website` lookup. Written at
-  approval time (New_brand rows are transient; this is what a future
-  re-sync of that brand looks up once its New_brand row is long gone). See
+- **`DataCrawler_System_Config`** -- durable `brand key -> website` lookup. Written at
+  approval time (DataCrawler_New_brand rows are transient; this is what a future
+  re-sync of that brand looks up once its DataCrawler_New_brand row is long gone). See
   `SystemConfigStore`.
-- **`Sync_logs`** -- history of sync job runs (job id, manufacturer,
+- **`DataCrawler_Sync_logs`** -- history of sync job runs (job id, manufacturer,
   status, counts). Written only at job start and job end, never per item,
   to stay well under Google Sheets API rate limits -- see
   `services/job_store.py` for the in-memory state that serves *live*
@@ -53,7 +53,7 @@ everything:
 tab in the spreadsheet as a syncable manufacturer (see
 `services/admin_sheets.py::RESERVED_SHEET_TITLES` for the exact exclusion
 list, and `core/manufacturer_resolution.py` for how a tab name resolves to
-either a hand-written code adapter or a `System_Config`-driven AI adapter).
+either a hand-written code adapter or a `DataCrawler_System_Config`-driven AI adapter).
 `POST /api/sync/all` syncs every one of them, one after another.
 
 Setup: download a service-account JSON key from Google Cloud Console, save
@@ -86,7 +86,7 @@ core/
   engine.py                    sync_manufacturer_data() — the ONE generic entry point,
                                 contains zero manufacturer-specific logic
   manufacturer_resolution.py    key -> (adapter class, config), either a code adapter
-                                (registry.py) or a System_Config-driven AI adapter
+                                (registry.py) or a DataCrawler_System_Config-driven AI adapter
   registry.py                   key -> adapter class + config, code adapters self-register
   models/                        RawProduct / CanonicalProduct / ValidationResult / job status
   pipeline/
@@ -99,29 +99,44 @@ core/
 manufacturers/
   base.py             BaseManufacturerAdapter (crawl/fetch/parse contract)
   hdcvt/               manufacturer adapter #1, hand-written (see below)
-  generic_ai/          AI-assisted adapter used for every System_Config-driven brand
+  generic_ai/          AI-assisted adapter used for every DataCrawler_System_Config-driven brand
 
 api/
   routes/              health, sync (POST /api/sync/manufacturer, POST /api/sync/all,
                         GET /api/sync/status/{id}), catalog (GET /api/manufacturers,
-                        GET /api/products), manufacturer-requests (New_brand intake)
+                        GET /api/products), manufacturer-requests (DataCrawler_New_brand intake),
+                        images (POST /api/images/download)
 
 services/
   google_sheets.py     per-manufacturer product tab: GoogleSheetsExporter (upsert by natural key)
-  admin_sheets.py       New_brand / System_Config / Sync_logs sheets (SheetRowStore + friends)
-  job_store.py           in-memory live job status + durable Sync_logs writes at start/end
+  admin_sheets.py       DataCrawler_New_brand / DataCrawler_System_Config / DataCrawler_Sync_logs sheets (SheetRowStore + friends)
+  job_store.py           in-memory live job status + durable DataCrawler_Sync_logs writes at start/end
   sheets_client.py        the one function that opens the spreadsheet (gspread auth)
   http_client.py         shared polite HTTP client: rate limiting, retry/backoff,
                           timeout, robots.txt awareness -- one implementation
                           used by every adapter
+  image_downloader.py    downloads a manufacturer's "image" column URLs to Data/<manufacturer>/
 ```
+
+## Downloading product images locally
+
+`POST /api/images/download?manufacturer=hdcvt` reads that manufacturer's
+sheet tab and downloads every URL in its "image" column
+(`CanonicalProduct.image_urls`, one per line -- see `services/google_sheets.py`)
+into `Data/<manufacturer>/` at the project root. Filenames are built from
+each row's `Title` by `core/image_naming.py`: every whitespace-separated
+word is title-cased and joined with "_", and every image after a
+product's first gets Windows Explorer's own duplicate-file suffix --
+e.g. `Sdvoe_(_1_0_G_).jpg`, then `Sdvoe_(_1_0_G_)_(1).jpg` for its second
+image. Re-running is cheap: a file already on disk under its deterministic
+name is left alone instead of re-downloaded.
 
 ## Adding a new manufacturer
 
 Two ways to onboard a brand:
 
 - **Through the admin UI** ("Yeu cau them hang moi" -> preview -> approve):
-  no code at all, uses the generic AI-assisted adapter. See the New_brand
+  no code at all, uses the generic AI-assisted adapter. See the DataCrawler_New_brand
   lifecycle above.
 - **Hand-written code adapter** (for a brand that needs real, verified
   selectors instead of AI extraction, like HDCVT): no changes to `core/`

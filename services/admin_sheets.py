@@ -1,14 +1,14 @@
 """Admin/config sheets that replace what used to be SQLite tables:
 
-  - New_brand     -- intake queue for "Yeu cau them hang moi" (replaces the
+  - DataCrawler_New_brand     -- intake queue for "Yeu cau them hang moi" (replaces the
                       old `manufacturer_requests` table). One row per
                       request; deleted once the brand has been fully synced
                       for the first time (see NewBrandStatus).
-  - System_Config -- durable "brand key -> website" lookup. New_brand rows
+  - DataCrawler_System_Config -- durable "brand key -> website" lookup. DataCrawler_New_brand rows
                       are transient (deleted once done), so this is where a
                       brand's crawl source lives permanently, for every
                       future re-sync.
-  - Sync_logs     -- durable history of sync job runs (replaces the old
+  - DataCrawler_Sync_logs     -- durable history of sync job runs (replaces the old
                       `sync_jobs` table). Live/in-progress status is served
                       from `services.job_store`'s in-memory state instead --
                       this sheet only gets written at job start and job end
@@ -36,12 +36,27 @@ logger = get_logger(__name__)
 
 # Sheet tab names that are never treated as a manufacturer's product catalog
 # when listing "which brands should we sync" (see list_brand_sheet_names).
+#
+# The DataCrawler_* names are this service's own admin sheets, prefixed
+# (2026-09-23) because this spreadsheet is shared with an existing CMS that
+# already owns plain "System_Config" (Key/Value app config), "New_brand"
+# (a Name/Logo/Status tab), and "Sync_Logs" -- reusing those names made this
+# service read the wrong schema and crash with a bare KeyError on "Slug".
+# The unprefixed names stay reserved too so those pre-existing CMS tabs are
+# never themselves mistaken for a syncable manufacturer catalog (they were
+# showing up as fake "brands" in /api/manufacturers before this was added).
+# "product_new"/"product_delete" are a third pair of pre-existing CMS tabs
+# (a product staging queue, unrelated to this service) excluded for the
+# same reason -- they happen to share the per-brand product schema.
 RESERVED_SHEET_TITLES = {
+    "datacrawler_new_brand",
+    "datacrawler_system_config",
+    "datacrawler_sync_logs",
     "new_brand",
+    "system_config",
+    "sync_logs",
     "product_new",
     "product_delete",
-    "sync_logs",
-    "system_config",
 }
 
 
@@ -155,7 +170,7 @@ class NewBrandStore:
     """
 
     def __init__(self, spreadsheet: gspread.Spreadsheet) -> None:
-        self._store = SheetRowStore(spreadsheet, "New_brand", NEW_BRAND_HEADERS, "Slug")
+        self._store = SheetRowStore(spreadsheet, "DataCrawler_New_brand", NEW_BRAND_HEADERS, "Slug")
 
     def create(self, *, name: str, website_url: str, notes: str | None = None) -> dict[str, str]:
         slug = slugify(name)
@@ -195,12 +210,12 @@ SYSTEM_CONFIG_HEADERS = ["Slug", "Tên hãng", "Website", "Cập nhật lúc"]
 
 class SystemConfigStore:
     """Durable 'brand key -> crawl source' lookup, so a re-sync of an
-    already-onboarded brand (whose New_brand row is long gone) still knows
+    already-onboarded brand (whose DataCrawler_New_brand row is long gone) still knows
     which website to crawl.
     """
 
     def __init__(self, spreadsheet: gspread.Spreadsheet) -> None:
-        self._store = SheetRowStore(spreadsheet, "System_Config", SYSTEM_CONFIG_HEADERS, "Slug")
+        self._store = SheetRowStore(spreadsheet, "DataCrawler_System_Config", SYSTEM_CONFIG_HEADERS, "Slug")
 
     def set_manufacturer(self, slug: str, name: str, website_url: str) -> dict[str, str]:
         return self._store.upsert(
@@ -227,7 +242,7 @@ class SyncLogsStore:
     """
 
     def __init__(self, spreadsheet: gspread.Spreadsheet) -> None:
-        self._store = SheetRowStore(spreadsheet, "Sync_logs", SYNC_LOGS_HEADERS, "Job ID")
+        self._store = SheetRowStore(spreadsheet, "DataCrawler_Sync_logs", SYNC_LOGS_HEADERS, "Job ID")
 
     def create(self, job_id: str, manufacturer: str, mode: str) -> dict[str, str]:
         now = _utcnow_iso()

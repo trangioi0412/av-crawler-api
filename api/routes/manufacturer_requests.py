@@ -2,13 +2,13 @@
 -- lets someone submit a name/website from the admin UI without needing to
 write any code.
 
-Tracked entirely in the New_brand Google Sheet (see
+Tracked entirely in the DataCrawler_New_brand Google Sheet (see
 `services/admin_sheets.py::NewBrandStore`) -- there is no database. A
 row's lifecycle:
 
     Cho duyet (submitted) -> Duyet (approved) -> Dang cao du lieu (crawling)
         -> Da cao xong (done) -- row deleted right after, since
-           System_Config (not New_brand) is the durable record of this
+           DataCrawler_System_Config (not DataCrawler_New_brand) is the durable record of this
            brand's website from here on.
 
     -> Loi cao du lieu (error) if the sync itself failed -- the row is left
@@ -121,7 +121,7 @@ def update_manufacturer_request_status(slug: str, payload: ManufacturerRequestSt
 def preview_manufacturer_request(slug: str) -> AiPreviewResponse:
     """Runs the AI-assisted adapter against a handful of real pages from
     the request's website and returns what it extracted, WITHOUT touching
-    New_brand, System_Config, or the product sheet -- purely for a human
+    DataCrawler_New_brand, DataCrawler_System_Config, or the product sheet -- purely for a human
     to eyeball accuracy before approving (see `/approve`).
     """
     row = _new_brand_store().get(slug)
@@ -175,7 +175,7 @@ def _run_new_brand_sync_job(slug: str, job_id: str) -> None:
 
     if result.status in (JobStatus.COMPLETED, JobStatus.COMPLETED_WITH_WARNINGS) and result.success > 0:
         # The brand's own product sheet tab now exists (upsert_rows creates
-        # it on first write) -- System_Config already has the durable
+        # it on first write) -- DataCrawler_System_Config already has the durable
         # website record (written at approval time, below), so this
         # request no longer needs to sit in the intake queue.
         store.update_status(slug, NewBrandStatus.DONE)
@@ -189,8 +189,8 @@ def _run_new_brand_sync_job(slug: str, job_id: str) -> None:
 @router.post("/{slug}/approve", response_model=AiApproveResponse, status_code=202)
 def approve_manufacturer_request(slug: str, background_tasks: BackgroundTasks) -> AiApproveResponse:
     """Confirms the AI preview looked good enough: records this
-    manufacturer's website in System_Config (the durable record from here
-    on) and kicks off a full sync. New_brand's status walks
+    manufacturer's website in DataCrawler_System_Config (the durable record from here
+    on) and kicks off a full sync. DataCrawler_New_brand's status walks
     Duyet -> Dang cao du lieu -> Da cao xong (row deleted) exactly as
     described at the top of this file.
     """

@@ -1,5 +1,5 @@
 """Tests for the "Yeu cau them hang moi" (request a new manufacturer)
-intake endpoints -- tracked entirely in the New_brand Google Sheet, no
+intake endpoints -- tracked entirely in the DataCrawler_New_brand Google Sheet, no
 database (see api/routes/manufacturer_requests.py).
 
 `probe_manufacturer_website` (the auto-recon step) and `GenericAIAdapter`
@@ -175,7 +175,7 @@ def test_preview_does_not_register_the_manufacturer(client: TestClient, fake_spr
 
     client.post(f"/api/manufacturer-requests/{created['id']}/preview")
 
-    # Preview must not write System_Config or create a product sheet tab.
+    # Preview must not write DataCrawler_System_Config or create a product sheet tab.
     assert "ai-not-registered-co" not in [ws.title for ws in fake_spreadsheet.worksheets()]
 
 
@@ -207,11 +207,11 @@ def test_approve_records_website_and_completes_sync(client: TestClient, fake_spr
     assert status["total"] == 2
     assert status["success"] == 2
 
-    # System_Config durably knows this brand's website from here on...
-    slugs = {row["Slug"] for row in _rows_of(fake_spreadsheet, "System_Config")}
+    # DataCrawler_System_Config durably knows this brand's website from here on...
+    slugs = {row["Slug"] for row in _rows_of(fake_spreadsheet, "DataCrawler_System_Config")}
     assert "ai-approve-co" in slugs
 
-    # ...so the New_brand row is gone once onboarding finished.
+    # ...so the DataCrawler_New_brand row is gone once onboarding finished.
     remaining = client.get("/api/manufacturer-requests").json()
     assert all(r["id"] != "ai-approve-co" for r in remaining)
 

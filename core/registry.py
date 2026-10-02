@@ -83,6 +83,7 @@ class ManufacturerRegistry:
             timeout_seconds=config.timeout_seconds,
             max_retries=config.max_retries,
             respect_robots_txt=config.respect_robots_txt,
+            ca_bundle_path=config.ca_bundle_path,
         )
         return adapter_cls(config, http_client)
 

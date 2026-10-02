@@ -43,11 +43,11 @@ def sync_manufacturer_data(manufacturer: str, *, mode: str = SyncMode.FULL.value
     """Synchronize one manufacturer's product catalog.
 
     `manufacturer` resolves to an adapter at runtime (a hand-written code
-    adapter, or a sheet-driven AI adapter via System_Config) -- never a
+    adapter, or a sheet-driven AI adapter via DataCrawler_System_Config) -- never a
     branch in an if/elif chain. Call it the same way for every manufacturer:
 
         sync_manufacturer_data(manufacturer="hdcvt")
-        sync_manufacturer_data(manufacturer="yealink")   # once onboarded via System_Config
+        sync_manufacturer_data(manufacturer="yealink")   # once onboarded via DataCrawler_System_Config
     """
     log = get_logger(__name__)
     started_at = datetime.now(timezone.utc)

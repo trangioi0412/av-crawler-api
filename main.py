@@ -7,17 +7,18 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from api.routes import catalog, health, manufacturer_requests, sync
+from api.routes import catalog, health, images, manufacturer_requests, sync
 from core.config import settings
 from core.logging import configure_logging, get_logger
 
 # Import manufacturers package so every code-based adapter (e.g. hdcvt)
 # self-registers before the API starts serving requests. Manufacturers
 # onboarded through "Yeu cau them hang moi" don't need this -- they're
-# resolved dynamically from the System_Config sheet on every request (see
+# resolved dynamically from the DataCrawler_System_Config sheet on every request (see
 # core/manufacturer_resolution.py), so unlike before there is nothing to
 # restore into an in-memory registry after a restart.
 import manufacturers  # noqa: F401
@@ -48,7 +49,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.exception_handler(FileNotFoundError)
+async def missing_credentials_handler(request: Request, exc: FileNotFoundError) -> JSONResponse:
+    # `services.sheets_client.open_spreadsheet` raises this when the
+    # service-account key configured by GOOGLE_SHEETS_CREDENTIALS_FILE isn't
+    # on disk. Every route touching Sheets hits the same failure mode, so
+    # one handler here beats a try/except in each of them -- and turns
+    # Starlette's default plain-text 500 into JSON callers can actually
+    # parse and act on.
+    logger.error("Google Sheets credentials file missing: %s", exc)
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+
 app.include_router(health.router)
 app.include_router(sync.router, prefix=settings.api_prefix)
 app.include_router(catalog.router, prefix=settings.api_prefix)
 app.include_router(manufacturer_requests.router, prefix=settings.api_prefix)
+app.include_router(images.router, prefix=settings.api_prefix)

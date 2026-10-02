@@ -43,3 +43,19 @@ def test_get_text_honors_explicit_charset_when_declared():
     text = client.get_text("https://example.com/page")
 
     assert "±8kV" in text
+
+
+def test_ca_bundle_path_is_left_default_when_not_given():
+    client = CrawlHttpClient(user_agent="test", request_delay_seconds=0)
+    # requests.Session.verify defaults to True (use certifi's own trust
+    # store) -- must stay untouched for every manufacturer that doesn't
+    # need an extra CA bundle.
+    assert client._session.verify is True
+
+
+def test_ca_bundle_path_is_applied_to_the_session_when_given():
+    """See manufacturers/eizo/ca_bundle.py: a site whose server sends an
+    incomplete TLS chain needs a CA bundle beyond certifi's default.
+    """
+    client = CrawlHttpClient(user_agent="test", request_delay_seconds=0, ca_bundle_path="/some/combined-bundle.pem")
+    assert client._session.verify == "/some/combined-bundle.pem"

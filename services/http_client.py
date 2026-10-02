@@ -38,9 +38,17 @@ class CrawlHttpClient:
         timeout_seconds: float = 15.0,
         max_retries: int = 3,
         respect_robots_txt: bool = True,
+        ca_bundle_path: str | None = None,
     ) -> None:
         self._session = requests.Session()
         self._session.headers.update({"User-Agent": user_agent})
+        if ca_bundle_path:
+            # A site whose server doesn't send its intermediate CA cert
+            # (verified against eizoglobal.com, see manufacturers/eizo/
+            # ca_bundle.py) needs a CA bundle beyond certifi's default --
+            # `requests` only accepts one bundle path, so this is expected
+            # to already be certifi's store plus the extra intermediate(s).
+            self._session.verify = ca_bundle_path
         self._user_agent = user_agent
         self._delay = request_delay_seconds
         self._timeout = timeout_seconds

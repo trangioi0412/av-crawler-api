@@ -1,8 +1,8 @@
 """Shared Google Sheets authentication/connection helper.
 
 Every service that talks to the spreadsheet (the per-brand product exporter
-in `google_sheets.py`, and the admin sheets -- New_brand / System_Config /
-Sync_logs -- in `admin_sheets.py`) opens it through this one function, so
+in `google_sheets.py`, and the admin sheets -- DataCrawler_New_brand / DataCrawler_System_Config /
+DataCrawler_Sync_logs -- in `admin_sheets.py`) opens it through this one function, so
 there is exactly one place that knows how the service-account credentials
 are loaded.
 """

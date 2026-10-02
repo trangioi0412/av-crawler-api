@@ -1,7 +1,7 @@
 """Resolves a manufacturer key to a concrete adapter, whether it's a
 hand-written code adapter (e.g. `manufacturers/hdcvt`, self-registered into
 `core.registry`) or a brand onboarded through the "Yeu cau them hang moi"
-flow, whose crawl source (website URL) lives in the System_Config sheet
+flow, whose crawl source (website URL) lives in the DataCrawler_System_Config sheet
 rather than in code.
 
 This is what lets `GET /api/manufacturers` and `POST /api/sync/manufacturer`
@@ -34,7 +34,7 @@ def _system_config_store() -> SystemConfigStore:
     if not settings.google_spreadsheet_id or not settings.google_sheets_credentials_path:
         raise RuntimeError(
             "Google Sheets is not configured (GOOGLE_SPREADSHEET_ID / credentials) -- "
-            "System_Config is the only place brand websites are looked up."
+            "DataCrawler_System_Config is the only place brand websites are looked up."
         )
     spreadsheet = open_admin_spreadsheet(settings.google_sheets_credentials_path, settings.google_spreadsheet_id)
     return SystemConfigStore(spreadsheet)
@@ -44,7 +44,7 @@ def resolve_manufacturer(key: str) -> tuple[type[BaseManufacturerAdapter], Manuf
     """Returns (adapter_class, config) for `key`.
 
     1. A hand-written adapter registered in code (e.g. "hdcvt") always wins.
-    2. Otherwise, looks up the brand's website in System_Config and uses
+    2. Otherwise, looks up the brand's website in DataCrawler_System_Config and uses
        the generic AI-assisted adapter.
 
     Raises UnknownManufacturerError if neither knows about `key`.
